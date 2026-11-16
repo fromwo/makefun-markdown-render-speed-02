@@ -12,6 +12,7 @@ import { parse } from './parse.js';
 // Harness directories, overridable by environment: MAKEFUN_INPUT_DIR is
 // where cases.json is read from, MAKEFUN_OUTPUT_DIR is where html.json is
 // written. Both default to the container paths /input and /output.
+// The driver stays thin on purpose: all rendering lives in parse.js.
 const inputDir = process.env.MAKEFUN_INPUT_DIR || '/input';
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
 

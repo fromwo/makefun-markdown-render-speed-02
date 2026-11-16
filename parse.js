@@ -33,9 +33,9 @@ function isSpace(ch) {
 function isPunct(ch) {
   return ch !== undefined && ch !== '' && PUNCT_RE.test(ch);
 }
-// ASCII punctuation only (marked's inline escape token Ye) — defined above
-// as isAsciiPunct; the inline escape scanner uses it, not the Unicode
-// isPunct (a backslash before a non-ASCII punctuation mark like « stays).
+// Unicode punctuation-or-space test. (isAsciiPunct below is the separate
+// ASCII-only check the inline escape scanner uses: a backslash before a
+// non-ASCII punctuation mark like « stays literal.)
 function isPunctSpace(ch) {
   return ch !== undefined && ch !== '' && PUNCT_SPACE_RE.test(ch);
 }

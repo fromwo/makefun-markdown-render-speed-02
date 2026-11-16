@@ -47,6 +47,8 @@ this machine (Node v24.22.1, shared-CPU VM, so times vary run to run):
 Reproduce the timing with the commands in [Test](#test) below, timing
 `node main.ts` with `date +%s%N` before and after.
 
+Re-run the timing commands more than once: a single run on this shared-CPU VM can vary by several hundred milliseconds.
+
 ## Run
 
 ```sh
