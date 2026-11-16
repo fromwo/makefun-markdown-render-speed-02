@@ -28,6 +28,25 @@ entity handling, and the GFM table/list/blockquote edge cases.
 renders every case with `parse()`, and writes the HTML strings in order to
 `html.json` in the output directory.
 
+## Performance
+
+Local practice set (720 cases, kit scorer: 720/720 passed), measured on
+this machine (Node v24.22.1, shared-CPU VM, so times vary run to run):
+
+- End-to-end `node main.ts` (startup + read + render + write): about
+  1.8–2.1 s wall clock (four runs: 1.76, 1.94, 2.00, 2.07 s). The marked
+  18.1.3 baseline driver measured 1.3–2.0 s on the same machine, so the
+  wall-clock gap is within run-to-run noise here.
+- Render-only, in-process (720 cases, excluding startup and I/O):
+  first run about 1.65 s (JIT warm-up), warm steady state about
+  0.74–0.79 s per full pass. Marked measured about 1.05 s cold and
+  0.74–0.81 s warm on the same set — warm steady state is essentially
+  tied on the practice set; the hidden-set timing is what the
+  competition harness measures.
+
+Reproduce the timing with the commands in [Test](#test) below, timing
+`node main.ts` with `date +%s%N` before and after.
+
 ## Run
 
 ```sh
