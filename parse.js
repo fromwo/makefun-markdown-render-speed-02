@@ -61,6 +61,9 @@ const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'":
 // Fast pre-check for escapeEncode/escapeNoEncode: if none of these
 // characters appear, the string needs no escaping at all.
 const ESCAPE_NEEDED_RE = /[&<>"']/;
+// Sticky test for "is there a non-whitespace character at or after
+// lastIndex" -- replaces /^\s*$/.test(s.slice(i)) without slicing.
+const NON_WS_Y = /\s*\S/y;
 
 function escapeEncode(s) {
   // Escape every & < > " '.
@@ -1321,7 +1324,11 @@ function matchExtendedUrl(s, i, insideBracket, delims) {
     }
   }
   // Plain email address.
-  if (/[A-Za-z0-9._+\-]/.test(s[i] || '')) {
+  const ec = s.charCodeAt(i);
+  const isEmailStart =
+    (ec >= 48 && ec <= 57) || (ec >= 65 && ec <= 90) || (ec >= 97 && ec <= 122) ||
+    ec === 46 || ec === 95 || ec === 43 || ec === 45;
+  if (isEmailStart) {
     const em = matchEmail(s, i, delims);
     if (em) {
       return { raw: em, href: 'mailto:' + em, end: i + em.length };
@@ -1381,7 +1388,8 @@ function scanInline(s, refs, inLink, ctx) {
       if (nx === '\n') {
         // A hard break only when something non-blank follows the newline.
         // Marked's br token also swallows the next line's leading blanks.
-        if (!/^\s*$/.test(s.slice(i + 2))) {
+        NON_WS_Y.lastIndex = i + 2;
+        if (NON_WS_Y.exec(s)) {
           pushNode({ k: 'b' });
           i += 2;
           while (s[i] === ' ' || s[i] === '\t') i++;
@@ -1570,9 +1578,9 @@ function scanInline(s, refs, inLink, ctx) {
       // Hard break: two or more trailing spaces before the newline, and
       // something non-blank after it.
       flushText(i);
-      const restAfter = s.slice(i + 1);
       const last = nodes[nodes.length - 1];
-      if (last && last.k === 't' && !last.esc && !/^\s*$/.test(restAfter)) {
+      NON_WS_Y.lastIndex = i + 1;
+      if (last && last.k === 't' && !last.esc && NON_WS_Y.exec(s)) {
         const m = / {2,}$/.exec(last.s);
         if (m) {
           last.s = last.s.slice(0, last.s.length - m[0].length);
