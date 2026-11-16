@@ -11,6 +11,10 @@
 
 const PUNCT_RE = /[\p{P}\p{S}]/u;
 const PUNCT_SPACE_RE = /[\s\p{P}\p{S}]/u;
+
+// Set while parse() runs its first (definition-collecting) pass so
+// inlineParse can skip all inline work whose HTML is discarded.
+let skipInline = false;
 const NOT_PUNCT_SPACE_RE = /[^\s\p{P}\p{S}]/u;
 const ALNUM_RE = /[\p{L}\p{N}]/u;
 const ENTITY_VALID_RE = /^(?:#\d{1,7}|#[Xx][0-9A-Fa-f]{1,6}|\w+);/;
@@ -54,9 +58,14 @@ function isAsciiPunct(ch) {
 // ---------------------------------------------------------------------------
 
 const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+// Fast pre-check for escapeEncode/escapeNoEncode: if none of these
+// characters appear, the string needs no escaping at all.
+const ESCAPE_NEEDED_RE = /[&<>"']/;
 
 function escapeEncode(s) {
   // Escape every & < > " '.
+  // Fast path: most text has none of these, so skip the per-char loop.
+  if (!ESCAPE_NEEDED_RE.test(s)) return s;
   let out = '';
   let start = 0;
   for (let i = 0; i < s.length; i++) {
@@ -72,6 +81,8 @@ function escapeEncode(s) {
 function escapeNoEncode(s) {
   // Escape < > " ' always, and & only when it does not start a valid
   // character reference (&#123; / &#xAB; / &name;).
+  // Fast path: most text has none of these, so skip the per-char loop.
+  if (!ESCAPE_NEEDED_RE.test(s)) return s;
   let out = '';
   let start = 0;
   for (let i = 0; i < s.length; i++) {
@@ -322,6 +333,18 @@ const WWW_PREFIX = 'www.';
 const AUTOLINK_RE = /^<([A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s\x00-\x1f<>]*)>/;
 const AUTOLINK_EMAIL_RE =
   /^<([A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)>/;
+// Sticky (y) variants of the above, matched against the full string with
+// lastIndex set to the candidate position, so callers never slice the
+// rest of the paragraph just to anchor a ^ regex. The ^ is dropped:
+// with y, the match must start exactly at lastIndex.
+const EMAIL_RE_Y = /[A-Za-z0-9._+\-]+@[A-Za-z0-9\-_]+(?:\.[A-Za-z0-9\-_]*[A-Za-z0-9])+(?![\w\-])/y;
+const EMAIL_RE_NO_LOOK_Y = /[A-Za-z0-9._+\-]+@[A-Za-z0-9\-_]+(?:\.[A-Za-z0-9\-_]*[A-Za-z0-9])+/y;
+const SCHEME_RE_Y = /[A-Za-z][A-Za-z0-9+.\-]{1,31}:\/\//y;
+const URL_TAIL_Y = /(?:[A-Za-z0-9-]+\.?)+[^\s<]*/y;
+const URL_TAIL_BR_Y = /(?:[A-Za-z0-9-]+\.?)+[^\s<\]]*/y;
+const AUTOLINK_RE_Y = /<([A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s\x00-\x1f<>]*)>/y;
+const AUTOLINK_EMAIL_RE_Y =
+  /<([A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)>/y;
 const TAG_ATTR_RE =
   /\s+[A-Za-z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/y;
 
@@ -1232,9 +1255,10 @@ function canCloseDelim(s, pos, ch, delims) {
 // lookahead fails only because a closable emphasis delimiter follows
 // (see canCloseDelim). Returns the backpedaled raw email, or null.
 function matchEmail(s, i, delims) {
-  const rest = s.slice(i);
-  const m = EMAIL_RE.exec(rest);
-  const m2 = EMAIL_RE_NO_LOOK.exec(rest);
+  EMAIL_RE_Y.lastIndex = i;
+  const m = EMAIL_RE_Y.exec(s);
+  EMAIL_RE_NO_LOOK_Y.lastIndex = i;
+  const m2 = EMAIL_RE_NO_LOOK_Y.exec(s);
   let raw = null;
   if (m2 && (!m || m2[0].length > m[0].length)) {
     const full = backpedal(m2[0]);
@@ -1272,11 +1296,12 @@ function matchExtendedUrl(s, i, insideBracket, delims) {
       return { raw, href: raw, end: i + raw.length };
     }
   }
-  const urlTail = insideBracket ? /^(?:[A-Za-z0-9-]+\.?)+[^\s<\]]*/ : /^(?:[A-Za-z0-9-]+\.?)+[^\s<]*/;
+  const urlTail = insideBracket ? URL_TAIL_BR_Y : URL_TAIL_Y;
   // www. -- preceded by the start or whitespace / * / _ / ~ / ( .
   if (s.startsWith(WWW_PREFIX, i)) {
     if (prev === '' || prev === ' ' || prev === '\t' || prev === '\n' || prev === '*' || prev === '_' || prev === '~' || prev === '(') {
-      const m = urlTail.exec(s.slice(i + 4));
+      urlTail.lastIndex = i + 4;
+      const m = urlTail.exec(s);
       if (m && m[0].length > 0) {
         let raw = 'www.' + backpedal(m[0]);
         // The domain part must contain at least one label character.
@@ -1285,10 +1310,11 @@ function matchExtendedUrl(s, i, insideBracket, delims) {
     }
   }
   // Scheme:// -- http, https, ftp (case-insensitive), any preceding char.
-  const sm = SCHEME_RE.exec(s.slice(i));
+  SCHEME_RE_Y.lastIndex = i;
+  const sm = SCHEME_RE_Y.exec(s);
   if (sm) {
-    const after = s.slice(i + sm[0].length);
-    const m = urlTail.exec(after);
+    urlTail.lastIndex = i + sm[0].length;
+    const m = urlTail.exec(s);
     if (m && m[0].length > 0) {
       const raw = sm[0] + backpedal(m[0]);
       return { raw, href: raw, end: i + raw.length };
@@ -1326,6 +1352,9 @@ function parseInlineNodes(s, refs, inLink) {
 }
 
 function inlineParse(s, refs, inLink) {
+  // First pass of parse() only collects link reference definitions; its
+  // rendered HTML is discarded, so skip all inline work there.
+  if (skipInline) return '';
   return renderNodes(parseInlineNodes(s, refs, inLink));
 }
 
@@ -1497,7 +1526,8 @@ function scanInline(s, refs, inLink, ctx) {
       continue;
     }
     if (ch === '<') {
-      const am = AUTOLINK_RE.exec(s.slice(i));
+      AUTOLINK_RE_Y.lastIndex = i;
+      const am = AUTOLINK_RE_Y.exec(s);
       if (am) {
         const raw = am[1];
         const href = cleanHref(raw);
@@ -1506,7 +1536,8 @@ function scanInline(s, refs, inLink, ctx) {
         textStart = i;
         continue;
       }
-      const em = AUTOLINK_EMAIL_RE.exec(s.slice(i));
+      AUTOLINK_EMAIL_RE_Y.lastIndex = i;
+      const em = AUTOLINK_EMAIL_RE_Y.exec(s);
       if (em) {
         const raw = em[1];
         const href = cleanHref('mailto:' + raw);
@@ -3013,8 +3044,11 @@ export function parse(markdown) {
   // First pass: collect every link reference definition in the document.
   // Marked lexes all blocks before parsing any inline content, so a
   // definition below a paragraph still applies to it; rendering inline
-  // content eagerly would miss those. (The first pass's HTML is discarded.)
+  // content eagerly would miss those. (The first pass's HTML is discarded,
+  // so inlineParse skips all inline work while skipInline is set.)
+  skipInline = true;
   parseBlocks(lines, refs, true);
+  skipInline = false;
   // Second pass: render with the complete reference table. The
   // document-wide inLink state is reset so the render pass replays it
   // from the start, exactly as marked's single lexing pass does.
